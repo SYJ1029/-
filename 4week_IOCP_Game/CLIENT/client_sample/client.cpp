@@ -3,7 +3,7 @@
 #include <iostream>
 using namespace std;
 
-#include "..\..\Practice_SampleGameIocp\Protocol.h"
+#include "..\..\iocp_game_server\iocp_game_server\protocol.h"
 
 sf::TcpSocket socket;
 
@@ -13,12 +13,8 @@ constexpr auto SCREEN_HEIGHT = WORLD_HEIGHT;
 constexpr auto TILE_WIDTH = 65;
 constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
-//constexpr auto MAX_USER = 10;
-
-constexpr int BUFFER_SIZE = 200;
-
-void send_packet(void* packet);
-
+constexpr auto MAX_USER = MAX_PLAYERS;
+constexpr int BUF_SIZE = 1024;
 
 int g_left_x;
 int g_top_y;
@@ -34,7 +30,7 @@ private:
 	sf::Text m_name;
 public:
 	int m_x, m_y;
-	char name[MAX_NAMELENGTH];
+	char name[MAX_NAME_LEN];
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
 		m_showing = false;
 		m_sprite.setTexture(t);
@@ -86,7 +82,7 @@ public:
 
 OBJECT avatar;
 std::string avatar_name;
-OBJECT players[MAX_PLAYER];
+OBJECT players[MAX_USER];
 
 OBJECT white_tile;
 OBJECT black_tile;
@@ -122,6 +118,13 @@ void client_finish()
 	delete pieces;
 }
 
+void send_packet(void* packet)
+{
+	unsigned char* p = reinterpret_cast<unsigned char*>(packet);
+	size_t sent = 0;
+	socket.send(packet, p[0], sent);
+}
+
 void ProcessPacket(char* ptr)
 {
 	static bool first_time = true;
@@ -131,21 +134,18 @@ void ProcessPacket(char* ptr)
 	{
 		S2C_LoginResult* packet = reinterpret_cast<S2C_LoginResult*>(ptr);
 		if (packet->success) {
-			std::cout << "Login Success! Message : " << packet->message << std::endl;
+			std::cout << "Login Success! : " << packet->message << std::endl;
 			C2S_Login p;
 			p.size = sizeof(p);
 			p.type = C2S_LOGIN;
-			strcpy_s(p.userName, avatar_name.c_str());
+			strcpy_s(p.username, avatar_name.c_str());
 			send_packet(&p);
-
-
 		}
 		else {
-			std::cout << "Login Failed! Message : " << packet->message << std::endl;
+			std::cout << "Login Failed! : " << packet->message << std::endl;
 			exit(-1);
 		}
 	}
-		break;
 	case S2C_AVATAR_INFO:
 	{
 		S2C_AvatarInfo* packet = reinterpret_cast<S2C_AvatarInfo*>(ptr);
@@ -160,12 +160,12 @@ void ProcessPacket(char* ptr)
 	{
 		S2C_AddPlayer* my_packet = reinterpret_cast<S2C_AddPlayer*>(ptr);
 		int id = my_packet->playerId;
-		if (id >= MAX_PLAYER) {
+		if (id >= MAX_USER) {
 			std::cout << "Too many users! id : " << id << std::endl;
 			exit(-1);
 		}
 		players[id].move(my_packet->x, my_packet->y);
-		players[id].set_name(my_packet->name);
+		players[id].set_name(my_packet->username);
 		players[id].show();
 		break;
 	}
@@ -178,7 +178,7 @@ void ProcessPacket(char* ptr)
 			g_left_x = my_packet->x - 4;
 			g_top_y = my_packet->y - 4;
 		}
-		else if (other_id < MAX_PLAYER) {
+		else if (other_id < MAX_USER) {
 			players[other_id].move(my_packet->x, my_packet->y);
 		}
 		break;
@@ -190,13 +190,12 @@ void ProcessPacket(char* ptr)
 		int other_id = my_packet->playerId;
 		if (other_id == g_myid)
 			avatar.hide();
-		else if (other_id < MAX_PLAYER)
+		else if (other_id < MAX_USER)
 			players[other_id].hide();
 		break;
 	}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
-		break;
 	}
 }
 
@@ -205,7 +204,7 @@ void process_data(char* net_buf, size_t io_byte)
 	char* ptr = net_buf;
 	static size_t in_packet_size = 0;
 	static size_t saved_packet_size = 0;
-	static char packet_buffer[BUFFER_SIZE];
+	static char packet_buffer[BUF_SIZE];
 
 	while (0 != io_byte) {
 		if (0 == in_packet_size) in_packet_size = ptr[0];
@@ -227,10 +226,10 @@ void process_data(char* net_buf, size_t io_byte)
 
 void client_main()
 {
-	char net_buf[BUFFER_SIZE];
+	char net_buf[BUF_SIZE];
 	size_t	received;
 
-	auto recv_result = socket.receive(net_buf, BUFFER_SIZE, received);
+	auto recv_result = socket.receive(net_buf, BUF_SIZE, received);
 	if (recv_result == sf::Socket::Error)
 	{
 		wcout << L"Recv 에러!";
@@ -256,13 +255,6 @@ void client_main()
 	for (auto& pl : players) pl.draw();
 }
 
-void send_packet(void *packet)
-{
-	unsigned char *p = reinterpret_cast<unsigned char *>(packet);
-	size_t sent = 0;
-	socket.send(packet, p[0], sent);
-}
-
 int main()
 {
 	wcout.imbue(locale("korean"));
@@ -275,7 +267,6 @@ int main()
 		wcout << L"서버와 연결할 수 없습니다.\n";
 		while (true);
 	}
-
 
 	client_initialize();
 
@@ -290,19 +281,19 @@ int main()
 			if (event.type == sf::Event::Closed)
 				window.close();
 			if (event.type == sf::Event::KeyPressed) {
-				DIRECTION direction = DIR_DOWN;
+				DIRECTION direction;;
 				switch (event.key.code) {
 				case sf::Keyboard::Left:
-					direction = DIR_LEFT;
+					direction = LEFT;
 					break;
 				case sf::Keyboard::Right:
-					direction = DIR_RIGHT;
+					direction = RIGHT;
 					break;
 				case sf::Keyboard::Up:
-					direction = DIR_UP;
+					direction = UP;
 					break;
 				case sf::Keyboard::Down:
-					direction = DIR_DOWN;
+					direction = DOWN;
 					break;
 				case sf::Keyboard::Escape:
 					window.close();
@@ -312,7 +303,7 @@ int main()
 					C2S_Move p;
 					p.size = sizeof(p);
 					p.type = C2S_MOVE;
-					p.dir = static_cast<DIRECTION>(direction);
+					p.dir = direction;
 					send_packet(&p);
 				}
 
