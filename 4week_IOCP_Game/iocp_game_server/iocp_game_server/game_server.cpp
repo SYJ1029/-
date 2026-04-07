@@ -137,6 +137,14 @@ void SESSION::process_packet(unsigned char* p)
 		C2S_Login* packet = reinterpret_cast<C2S_Login*>(p);
 		strncpy_s(m_username, packet->username, MAX_NAME_LEN);
 		cout << "Player[" << m_id << "] logged in as " << m_username << endl;
+
+		for (auto& other : clients) {
+			if (false == other.m_is_connected) continue;
+			if (other.m_id == m_id) continue;
+			other.send_add_player(m_id);
+			clients[m_id].send_add_player(other.m_id);
+		}
+
 		send_avatar_info();
 	}
 				  break;
@@ -251,12 +259,7 @@ int main()
 				clients[player_index].send_login_success();
 				clients[player_index].m_prev_recv = 0;
 
-				for (auto& other : clients) {
-					if (false == other.m_is_connected) continue;
-					if (other.m_id == player_index) continue;
-					other.send_add_player(player_index);
-					clients[player_index].send_add_player(other.m_id);
-				}
+
 
 				clients[player_index].do_recv();
 			}
