@@ -111,8 +111,12 @@ void client_initialize()
 	}
 }
 
+
 void client_finish()
 {
+	socket.setBlocking(true);
+	socket.disconnect();
+
 	delete g_font;
 	delete board;
 	delete pieces;

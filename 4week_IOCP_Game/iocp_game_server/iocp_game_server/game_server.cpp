@@ -271,6 +271,17 @@ int main()
 		case IO_RECV:
 		{
 			int player_index = static_cast<int>(key);
+			if(num_bytes == 0) {
+				cout << "Client[" << player_index << "] Disconnected.\n";
+				clients[player_index].m_is_connected = false;
+				for (auto& cl : clients)
+					if (true == cl.m_is_connected)
+						cl.send_remove_player(player_index);
+				closesocket(clients[player_index].m_client);
+				clients[player_index].m_client = INVALID_SOCKET;
+				continue;
+			}
+
 			cout << "Client[" << player_index << "] sent a message." << endl;
 			SESSION& cl = clients[player_index];
 			unsigned char* p = reinterpret_cast<unsigned char *>(exp_over->m_buff);
