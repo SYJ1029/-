@@ -347,6 +347,7 @@ int main()
 
 	vector <thread> worker_threads;
 	int num_threads = thread::hardware_concurrency();
+	worker_threads.reserve(num_threads);
 
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread);
