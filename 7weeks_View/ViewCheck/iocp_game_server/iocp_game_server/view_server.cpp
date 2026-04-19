@@ -60,6 +60,74 @@ void error_display(const wchar_t* msg, int err_no)
 
 enum CL_STATE { CS_CONNECT, CS_PLAYING, CS_LOGOUT };
 
+constexpr int SECTOR_SIZE = VIEW_RANGE * 2 + 1;
+constexpr int MAX_SECTORS_X = (WORLD_WIDTH + SECTOR_SIZE - 1) / SECTOR_SIZE;
+constexpr int MAX_SECTORS_Y = (WORLD_HEIGHT + SECTOR_SIZE - 1) / SECTOR_SIZE;
+
+constexpr int SECTOR_X(int x) { return x / SECTOR_SIZE; }
+constexpr int SECTOR_Y(int y) { return y / SECTOR_SIZE; }
+constexpr int SECTOR_ID(int sx, int sy) { return sy * MAX_SECTORS_X + sx; }
+
+class SECTOR
+{
+private:
+public:
+	std::unordered_set<int> m_players; // IDs of players in this sector
+	std::mutex m_mutex; // Mutex to protect access to m_players
+public:
+	SECTOR() {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_players.clear();
+	}
+
+	~SECTOR() {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_players.clear();
+	}
+
+public:
+	void add_player(int player_id) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_players.insert(player_id);
+	}
+	void remove_player(int player_id) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_players.erase(player_id);
+	}
+};
+
+class SectorManager 
+{
+public:
+	SectorManager() 
+	{
+		for (int i = 0; i < MAX_SECTORS_X * MAX_SECTORS_Y; ++i) {
+			sectors[i] = std::make_shared<SECTOR>();
+		}
+	}
+
+	void add_player_to_sector(int player_id, short x, short y) {
+		int sector_id = SECTOR_ID(SECTOR_X(x), SECTOR_Y(y));
+		sectors[sector_id]->add_player(player_id);
+	}
+
+	void remove_player_from_sector(int player_id, short x, short y) {
+		int sector_id = SECTOR_ID(SECTOR_X(x), SECTOR_Y(y));
+		sectors[sector_id]->remove_player(player_id);
+	}
+
+public:
+	std::vector<int> get_players_in_sector(short x, short y) {
+		int sid = SECTOR_ID(SECTOR_X(x), SECTOR_Y(y));
+		std::lock_guard<std::mutex> lg(sectors[sid]->m_mutex);
+		return { sectors[sid]->m_players.begin(), sectors[sid]->m_players.end() };
+	}
+
+private:
+	std::array<std::shared_ptr<SECTOR>, MAX_SECTORS_X * MAX_SECTORS_Y> sectors;
+};
+
+
 class SESSION {
 public:
 	SOCKET m_client;
@@ -154,6 +222,10 @@ public:
 tbb::concurrent_unordered_map<int,
 	std::atomic<std::shared_ptr<SESSION>>> clients;
 
+
+
+SectorManager sector_manager;
+
 SOCKET g_server;
 HANDLE g_iocp;
 
@@ -193,8 +265,9 @@ void SESSION::do_move(DIRECTION dir)
 	std::unordered_set<int> new_v;
 
 	// cout << "Player[" << m_id << "] moved to (" << m_x << ", " << m_y << ")\n";
-	for (auto& cl : clients) {
-		std::shared_ptr<SESSION> pl = cl.second.load();
+
+	for (auto& cl : sector_manager.get_players_in_sector(m_x, m_y)) {
+		std::shared_ptr<SESSION> pl = clients[cl];
 		if (nullptr == pl) continue;
 		if (CS_PLAYING != pl->m_state) continue;
 		if (is_visible(pl->m_x, pl->m_y)) {
@@ -244,8 +317,9 @@ bool SESSION::process_packet(unsigned char* p)
 		cout << "Player[" << m_id << "] logged in as " << m_username << endl;
 		send_avatar_info();
 		m_state = CS_PLAYING;
-		for (auto& c : clients) {
-			std::shared_ptr<SESSION> pl = c.second.load();
+		sector_manager.add_player_to_sector(m_id, m_x, m_y);
+		for (auto& c : sector_manager.get_players_in_sector(m_x, m_y)) {
+			std::shared_ptr<SESSION> pl = clients[c];
 			if (nullptr == pl) continue;
 			if (pl->m_id == m_id) continue;
 			if(false == is_visible(pl->m_x, pl->m_y)) continue;
@@ -311,6 +385,8 @@ void disconnect(int key)
 		}
 		closesocket(cl->m_client);
 		cl->m_client = INVALID_SOCKET;
+
+		sector_manager.remove_player_from_sector(key, cl->m_x, cl->m_y);
 	}
 	clients[key].store(nullptr);
 }
