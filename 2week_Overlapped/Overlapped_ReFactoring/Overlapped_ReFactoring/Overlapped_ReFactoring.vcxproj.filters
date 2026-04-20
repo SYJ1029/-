@@ -1,0 +1,66 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="헤더 파일">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="리소스 파일">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Utility">
+      <UniqueIdentifier>{8d358a98-1c3b-4668-a80b-7710329148c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Session">
+      <UniqueIdentifier>{5453b7e4-f714-4365-8a8f-c7f1692c411e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SocketManagement">
+      <UniqueIdentifier>{c82756bd-50e2-474c-882f-214343c78fd4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Entry">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="STDAFX">
+      <UniqueIdentifier>{26bd7d02-21ea-480a-9bcb-b223fa80281a}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="NetworkCallback.cpp">
+      <Filter>Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="SESSION.cpp">
+      <Filter>Session</Filter>
+    </ClCompile>
+    <ClCompile Include="EXP_OVER.cpp">
+      <Filter>SocketManagement</Filter>
+    </ClCompile>
+    <ClCompile Include="Overlapped_Server.cpp">
+      <Filter>Entry</Filter>
+    </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>STDAFX</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Protocol.h">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="NetworkCallback.h">
+      <Filter>Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="SESSION.h">
+      <Filter>Session</Filter>
+    </ClInclude>
+    <ClInclude Include="EXP_OVER.h">
+      <Filter>SocketManagement</Filter>
+    </ClInclude>
+    <ClInclude Include="stdafx.h">
+      <Filter>STDAFX</Filter>
+    </ClInclude>
+    <ClInclude Include="Types.h">
+      <Filter>Utility</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
