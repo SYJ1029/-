@@ -2,11 +2,13 @@
 #include <SFML/Network.hpp>
 #include <iostream>
 #include <unordered_map>
+#include <Windows.h>
+#include <chrono>
 using namespace std;
 
 #include "..\..\iocp_game_server\iocp_game_server\protocol.h"
 
-sf::TcpSocket socket;
+sf::TcpSocket s_socket;
 
 constexpr auto SCREEN_WIDTH = 16;
 constexpr auto SCREEN_HEIGHT = 16;
@@ -14,27 +16,32 @@ constexpr auto SCREEN_HEIGHT = 16;
 constexpr auto TILE_WIDTH = 65;
 constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
-constexpr int BUF_SIZE = 1024;
 
 int g_left_x;
 int g_top_y;
 int g_myid;
 
 sf::RenderWindow* g_window;
-sf::Font *g_font;
+sf::Font g_font;
 
 class OBJECT {
 private:
 	bool m_showing;
 	sf::Sprite m_sprite;
+
 	sf::Text m_name;
+	sf::Text m_chat;
+	chrono::system_clock::time_point m_mess_end_time;
 public:
+	int id;
 	int m_x, m_y;
-	char name[MAX_NAME_LEN];
+	char name[NAME_SIZE];
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
 		m_showing = false;
 		m_sprite.setTexture(t);
 		m_sprite.setTextureRect(sf::IntRect(x, y, x2, y2));
+		set_name("NONAME");
+		m_mess_end_time = chrono::system_clock::now();
 	}
 	OBJECT() {
 		m_showing = false;
@@ -67,25 +74,37 @@ public:
 		m_sprite.setPosition(rx, ry);
 		g_window->draw(m_sprite);
 		auto size = m_name.getGlobalBounds();
-		m_name.setPosition(rx + 32 - size.width / 2, ry - 10);
-		g_window->draw(m_name);
+		if (m_mess_end_time < chrono::system_clock::now()) {
+			m_name.setPosition(rx + 32 - size.width / 2, ry - 10);
+			g_window->draw(m_name);
+		}
+		else {
+			m_chat.setPosition(rx + 32 - size.width / 2, ry - 10);
+			g_window->draw(m_chat);
+		}
+	}
+	void set_name(const char str[]) {
+		m_name.setFont(g_font);
+		m_name.setString(str);
+		if (id < MAX_USER) m_name.setFillColor(sf::Color(255, 255, 255));
+		else m_name.setFillColor(sf::Color(255, 255, 0));
+		m_name.setStyle(sf::Text::Bold);
 	}
 
-	void set_name(const char str[]) {
-		m_name.setFont(*g_font);
-		m_name.setString(str);
-		m_name.setCharacterSize(20);
-		m_name.setFillColor(sf::Color(255, 255, 0));
-		m_name.setStyle(sf::Text::Bold);
+	void set_chat(const char str[]) {
+		m_chat.setFont(g_font);
+		m_chat.setString(str);
+		m_chat.setFillColor(sf::Color(255, 255, 255));
+		m_chat.setStyle(sf::Text::Bold);
+		m_mess_end_time = chrono::system_clock::now() + chrono::seconds(3);
 	}
 };
 
 OBJECT avatar;
-std::unordered_map <int, OBJECT> players;
+unordered_map <int, OBJECT> players;
 
 OBJECT white_tile;
 OBJECT black_tile;
-std::string avatar_name;
 
 sf::Texture* board;
 sf::Texture* pieces;
@@ -96,31 +115,21 @@ void client_initialize()
 	pieces = new sf::Texture;
 	board->loadFromFile("chessmap.bmp");
 	pieces->loadFromFile("chess2.png");
-	g_font = new sf::Font;
-	if (false == g_font->loadFromFile("cour.ttf")) {
+	if (false == g_font.loadFromFile("cour.ttf")) {
 		cout << "Font Loading Error!\n";
 		exit(-1);
 	}
 	white_tile = OBJECT{ *board, 5, 5, TILE_WIDTH, TILE_WIDTH };
 	black_tile = OBJECT{ *board, 69, 5, TILE_WIDTH, TILE_WIDTH };
 	avatar = OBJECT{ *pieces, 128, 0, 64, 64 };
-	avatar.set_name(avatar_name.c_str());
 	avatar.move(4, 4);
 }
 
 void client_finish()
 {
 	players.clear();
-	delete g_font;
 	delete board;
 	delete pieces;
-}
-
-void send_packet(void* packet)
-{
-	unsigned char* p = reinterpret_cast<unsigned char*>(packet);
-	size_t sent = 0;
-	socket.send(packet, p[0], sent);
 }
 
 void ProcessPacket(char* ptr)
@@ -128,70 +137,83 @@ void ProcessPacket(char* ptr)
 	static bool first_time = true;
 	switch (ptr[1])
 	{
-	case S2C_LOGIN_RESULT:
+	case SC_LOGIN_INFO:
 	{
-		S2C_LoginResult* packet = reinterpret_cast<S2C_LoginResult*>(ptr);
-		if (packet->success) {
-			std::cout << "Login Success! : " << packet->message << std::endl;
-			C2S_Login p;
-			p.size = sizeof(p);
-			p.type = C2S_LOGIN;
-			strcpy_s(p.username, avatar_name.c_str());
-			send_packet(&p);
-		}
-		else {
-			std::cout << "Login Failed! : " << packet->message << std::endl;
-			socket.disconnect();
-			//g_window->close();
-		}
-
-		break;
-	}
-	case S2C_AVATAR_INFO:
-	{
-		S2C_AvatarInfo* packet = reinterpret_cast<S2C_AvatarInfo*>(ptr);
-		g_myid = packet->playerId;
-		avatar.m_x = packet->x;
-		avatar.m_y = packet->y;
-		g_left_x = packet->x - 8;
-		g_top_y = packet->y - 8;
+		SC_LOGIN_INFO_PACKET * packet = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(ptr);
+		g_myid = packet->id;
+		avatar.id = g_myid;
+		avatar.move(packet->x, packet->y);
+		g_left_x = packet->x - SCREEN_WIDTH / 2;
+		g_top_y = packet->y - SCREEN_HEIGHT / 2;
 		avatar.show();
 	}
 	break;
 
-	case S2C_ADD_PLAYER:
+	case SC_ADD_OBJECT:
 	{
-		S2C_AddPlayer* my_packet = reinterpret_cast<S2C_AddPlayer*>(ptr);
-		int id = my_packet->playerId;
-		players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
-		players[id].move(my_packet->x, my_packet->y);
-		players[id].set_name(my_packet->username);
-		players[id].show();
+		SC_ADD_OBJECT_PACKET* my_packet = reinterpret_cast<SC_ADD_OBJECT_PACKET*>(ptr);
+		int id = my_packet->id;
+
+		if (id == g_myid) {
+			avatar.move(my_packet->x, my_packet->y);
+			g_left_x = my_packet->x - SCREEN_WIDTH / 2;
+			g_top_y = my_packet->y - SCREEN_HEIGHT / 2;
+			avatar.show();
+		}
+		else if (id < MAX_USER) {
+			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
+			players[id].id = id;
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
+		}
+		else {
+			players[id] = OBJECT{ *pieces, 256, 0, 64, 64 };
+			players[id].id = id;
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
+		}
 		break;
 	}
-	case S2C_MOVE_PLAYER:
+	case SC_MOVE_OBJECT:
 	{
-		S2C_MovePlayer* my_packet = reinterpret_cast<S2C_MovePlayer*>(ptr);
-		int other_id = my_packet->playerId;
+		SC_MOVE_OBJECT_PACKET* my_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(ptr);
+		int other_id = my_packet->id;
 		if (other_id == g_myid) {
 			avatar.move(my_packet->x, my_packet->y);
-			g_left_x = my_packet->x - 8;
-			g_top_y = my_packet->y - 8;
+			g_left_x = my_packet->x - SCREEN_WIDTH/2;
+			g_top_y = my_packet->y - SCREEN_HEIGHT/2;
 		}
-		else  {
+		else {
 			players[other_id].move(my_packet->x, my_packet->y);
 		}
 		break;
 	}
 
-	case S2C_REMOVE_PLAYER:
+	case SC_REMOVE_OBJECT:
 	{
-		S2C_RemovePlayer* my_packet = reinterpret_cast<S2C_RemovePlayer*>(ptr);
-		int other_id = my_packet->playerId;
-		if (other_id == g_myid)
+		SC_REMOVE_OBJECT_PACKET* my_packet = reinterpret_cast<SC_REMOVE_OBJECT_PACKET*>(ptr);
+		int other_id = my_packet->id;
+		if (other_id == g_myid) {
 			avatar.hide();
-		else 
+		}
+		else {
 			players.erase(other_id);
+		}
+		break;
+	}
+	case SC_CHAT:
+	{
+		SC_CHAT_PACKET* my_packet = reinterpret_cast<SC_CHAT_PACKET*>(ptr);
+		int other_id = my_packet->id;
+		if (other_id == g_myid) {
+			avatar.set_chat(my_packet->mess);
+		}
+		else {
+			players[other_id].set_chat(my_packet->mess);
+		}
+
 		break;
 	}
 	default:
@@ -229,15 +251,14 @@ void client_main()
 	char net_buf[BUF_SIZE];
 	size_t	received;
 
-	auto recv_result = socket.receive(net_buf, BUF_SIZE, received);
+	auto recv_result = s_socket.receive(net_buf, BUF_SIZE, received);
 	if (recv_result == sf::Socket::Error)
 	{
 		wcout << L"Recv 에러!";
 		exit(-1);
 	}
-	if (recv_result == sf::Socket::Disconnected)
-	{
-		wcout << L"Recv 에러!";
+	if (recv_result == sf::Socket::Disconnected) {
+		wcout << L"Disconnected\n";
 		exit(-1);
 	}
 	if (recv_result != sf::Socket::NotReady)
@@ -249,7 +270,7 @@ void client_main()
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
 			if ((tile_x < 0) || (tile_y < 0)) continue;
-			if (0 == (tile_x / 3 + tile_y / 3) % 2) {
+			if (0 ==(tile_x /3 + tile_y /3) % 2) {
 				white_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 				white_tile.a_draw();
 			}
@@ -262,27 +283,42 @@ void client_main()
 	avatar.draw();
 	for (auto& pl : players) pl.second.draw();
 	sf::Text text;
-	text.setFont(*g_font);
+	text.setFont(g_font);
 	char buf[100];
 	sprintf_s(buf, "(%d, %d)", avatar.m_x, avatar.m_y);
 	text.setString(buf);
 	g_window->draw(text);
 }
 
+void send_packet(void *packet)
+{
+	unsigned char *p = reinterpret_cast<unsigned char *>(packet);
+	size_t sent = 0;
+	s_socket.send(packet, p[0], sent);
+}
+
 int main()
 {
 	wcout.imbue(locale("korean"));
-	std::cout << "Enter User Name : ";
-	std::cin >> avatar_name;
-	sf::Socket::Status status = socket.connect("127.0.0.1", PORT);
-	socket.setBlocking(false);
+	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
+	s_socket.setBlocking(false);
 
 	if (status != sf::Socket::Done) {
 		wcout << L"서버와 연결할 수 없습니다.\n";
-		while (true);
+		exit(-1);
 	}
 
 	client_initialize();
+	CS_LOGIN_PACKET p;
+	p.size = sizeof(p);
+	p.type = CS_LOGIN;
+
+	string player_name{ "P" };
+	player_name += to_string(GetCurrentProcessId());
+	
+	strcpy_s(p.name, player_name.c_str());
+	send_packet(&p);
+	avatar.set_name(p.name);
 
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "2D CLIENT");
 	g_window = &window;
@@ -295,29 +331,29 @@ int main()
 			if (event.type == sf::Event::Closed)
 				window.close();
 			if (event.type == sf::Event::KeyPressed) {
-				DIRECTION direction;;
+				int direction = -1;
 				switch (event.key.code) {
 				case sf::Keyboard::Left:
-					direction = LEFT;
+					direction = 2;
 					break;
 				case sf::Keyboard::Right:
-					direction = RIGHT;
+					direction = 3;
 					break;
 				case sf::Keyboard::Up:
-					direction = UP;
+					direction = 0;
 					break;
 				case sf::Keyboard::Down:
-					direction = DOWN;
+					direction = 1;
 					break;
 				case sf::Keyboard::Escape:
 					window.close();
 					break;
 				}
 				if (-1 != direction) {
-					C2S_Move p;
+					CS_MOVE_PACKET p;
 					p.size = sizeof(p);
-					p.type = C2S_MOVE;
-					p.dir = direction;
+					p.type = CS_MOVE;
+					p.direction = direction;
 					send_packet(&p);
 				}
 

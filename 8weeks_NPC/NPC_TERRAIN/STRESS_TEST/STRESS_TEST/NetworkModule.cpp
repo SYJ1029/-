@@ -127,28 +127,10 @@ void SendPacket(int cl, void* packet)
 void ProcessPacket(int ci, unsigned char packet[])
 {
 	switch (packet[1]) {
-	case S2C_LOGIN_RESULT:
-	{
-		S2C_LoginResult* p = reinterpret_cast<S2C_LoginResult*>(packet);
-		if (p->success) {
-
-			C2S_Login l_packet;
-
-			int temp = num_connections;
-			sprintf_s(l_packet.username, "%d", temp);
-			l_packet.size = sizeof(l_packet);
-			l_packet.type = C2S_LOGIN;
-			SendPacket(ci, &l_packet);
-		}
-		else {
-			DisconnectClient(ci);
-			//g_window->close();
-		}
-	}
-	case S2C_MOVE_PLAYER: {
-		S2C_MovePlayer* move_packet = reinterpret_cast<S2C_MovePlayer*>(packet);
-		if (move_packet->playerId < MAX_CLIENTS) {
-			int my_id = client_map[move_packet->playerId];
+	case SC_MOVE_OBJECT: {
+		SC_MOVE_OBJECT_PACKET* move_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(packet);
+		if (move_packet->id < MAX_CLIENTS) {
+			int my_id = client_map[move_packet->id];
 			if (-1 != my_id) {
 				g_clients[my_id].x = move_packet->x;
 				g_clients[my_id].y = move_packet->y;
@@ -164,16 +146,17 @@ void ProcessPacket(int ci, unsigned char packet[])
 		}
 	}
 					   break;
-	case S2C_ADD_PLAYER: break;
-	case S2C_REMOVE_PLAYER: break;
-	case S2C_AVATAR_INFO:
+	case SC_ADD_OBJECT: break;
+	case SC_REMOVE_OBJECT: break;
+	case SC_CHAT: break;
+	case SC_LOGIN_INFO:
 	{
 		g_clients[ci].connected = true;
 		active_clients++;
-		S2C_AvatarInfo* login_packet = reinterpret_cast<S2C_AvatarInfo*>(packet);
+		SC_LOGIN_INFO_PACKET* login_packet = reinterpret_cast<SC_LOGIN_INFO_PACKET*>(packet);
 		int my_id = ci;
-		client_map[login_packet->playerId] = my_id;
-		g_clients[my_id].id = login_packet->playerId;
+		client_map[login_packet->id] = my_id;
+		g_clients[my_id].id = login_packet->id;
 		g_clients[my_id].x = login_packet->x;
 		g_clients[my_id].y = login_packet->y;
 
@@ -311,7 +294,7 @@ void Adjust_Number_Of_Client()
 	SOCKADDR_IN ServerAddr;
 	ZeroMemory(&ServerAddr, sizeof(SOCKADDR_IN));
 	ServerAddr.sin_family = AF_INET;
-	ServerAddr.sin_port = htons(PORT);
+	ServerAddr.sin_port = htons(PORT_NUM);
 	ServerAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
 
@@ -330,6 +313,15 @@ void Adjust_Number_Of_Client()
 
 	DWORD recv_flag = 0;
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_clients[num_connections].client_socket), g_hiocp, num_connections, 0);
+
+	CS_LOGIN_PACKET l_packet;
+
+	int temp = num_connections;
+	sprintf_s(l_packet.name, "%d", temp);
+	l_packet.size = sizeof(l_packet);
+	l_packet.type = CS_LOGIN;
+	SendPacket(num_connections, &l_packet);
+
 
 	int ret = WSARecv(g_clients[num_connections].client_socket, &g_clients[num_connections].recv_over.wsabuf, 1,
 		NULL, &recv_flag, &g_clients[num_connections].recv_over.over, NULL);
@@ -356,14 +348,14 @@ void Test_Thread()
 			if (false == g_clients[i].connected) continue;
 			if (g_clients[i].last_move_time + 1s > high_resolution_clock::now()) continue;
 			g_clients[i].last_move_time = high_resolution_clock::now();
-			C2S_Move my_packet;
+			CS_MOVE_PACKET my_packet;
 			my_packet.size = sizeof(my_packet);
-			my_packet.type = C2S_MOVE;
+			my_packet.type = CS_MOVE;
 			switch (rand() % 4) {
-			case 0: my_packet.dir = UP; break;
-			case 1: my_packet.dir = DOWN; break;
-			case 2: my_packet.dir = LEFT; break;
-			case 3: my_packet.dir = RIGHT; break;
+			case 0: my_packet.direction = 0; break;
+			case 1: my_packet.direction = 1; break;
+			case 2: my_packet.direction = 2; break;
+			case 3: my_packet.direction = 3; break;
 			}
 			my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
 			SendPacket(i, &my_packet);
