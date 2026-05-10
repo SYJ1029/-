@@ -8,12 +8,14 @@
 #include <unordered_set>
 #include <chrono>
 #include <concurrent_priority_queue.h>
-#include "protocol.h"
+#include "protocol_2026.h"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
 using namespace std;
 using namespace std::chrono;
+
+constexpr int BUF_SIZE = 200;
 
 constexpr int VIEW_RANGE = 5;
 constexpr int MOVE_COOL_TIME = 1000; // ms
@@ -69,7 +71,7 @@ public:
 	int _id;
 	SOCKET _socket;
 	short	x, y;
-	char	_name[NAME_SIZE];
+	char	_name[MAX_NAME_LEN];
 	int		_prev_remain;
 	unordered_set <int> _view_list;
 	mutex	_vl;
@@ -107,12 +109,21 @@ public:
 	}
 	void send_login_info_packet()
 	{
-		SC_LOGIN_INFO_PACKET p;
-		p.id = _id;
-		p.size = sizeof(SC_LOGIN_INFO_PACKET);
-		p.type = SC_LOGIN_INFO;
+		S2C_AvatarInfo p;
+		p.playerId = _id;
+		p.size = sizeof(S2C_AvatarInfo);
+		p.type = S2C_AVATAR_INFO;
 		p.x = x;
 		p.y = y;
+		do_send(&p);
+	}
+	void send_login_success()
+	{
+		S2C_LoginResult p;
+		p.size = sizeof(S2C_LoginResult);
+		p.type = S2C_LOGIN_RESULT;
+		p.success = true;
+		strcpy_s(p.message, "Login successful.");
 		do_send(&p);
 	}
 	void send_move_packet(int c_id);
@@ -128,10 +139,10 @@ public:
 			return;
 		}
 		_vl.unlock();
-		SC_REMOVE_OBJECT_PACKET p;
-		p.id = c_id;
-		p.size = sizeof(p);
-		p.type = SC_REMOVE_OBJECT;
+		S2C_RemovePlayer p;
+		p.playerId = c_id;
+		p.size = sizeof(S2C_RemovePlayer);
+		p.type = S2C_REMOVE_PLAYER;
 		do_send(&p);
 	}
 	void do_random_move();
@@ -159,7 +170,7 @@ public:
 };
 
 HANDLE h_iocp;
-array<SESSION, MAX_USER + MAX_NPC> clients;
+array<SESSION, MAX_PLAYERS + MAX_NPCS> clients;
 
 // NPC 구현 첫번째 방법
 //  NPC클래스를 별도 제작, NPC컨테이너를 따로 생성한다.
@@ -188,7 +199,7 @@ OVER_EXP g_a_over;
 
 bool is_pc(int object_id)
 {
-	return object_id < MAX_USER;
+	return object_id < NPC_ID_START;
 }
 
 bool is_npc(int object_id)
@@ -214,9 +225,9 @@ void SESSION::do_random_move()
 
 
 	switch (rand() % 4) {
-	case 0: if (x < (W_WIDTH - 1)) x++; break;
+	case 0: if (x < (WORLD_WIDTH - 1)) x++; break;
 	case 1: if (x > 0) x--; break;
-	case 2: if (y < (W_HEIGHT - 1)) y++; break;
+	case 2: if (y < (WORLD_HEIGHT - 1)) y++; break;
 	case 3:if (y > 0) y--; break;
 	}
 
@@ -243,7 +254,7 @@ void SESSION::do_random_move()
 		if (0 == new_vl.count(pl))
 				clients[pl].send_remove_player_packet(_id);
 
-	if (_id == MAX_USER) {
+	if (_id == NPC_ID_START) {
 		auto delay = system_clock::now() - npc_last_move_time;
 		std::cout << "NPC " << _id << " moved. Time since last move: " << duration_cast<milliseconds>(delay).count() << "ms\n";
 	}
@@ -253,10 +264,10 @@ void SESSION::do_random_move()
 
 void SESSION::send_move_packet(int c_id)
 {
-	SC_MOVE_OBJECT_PACKET p;
-	p.id = c_id;
-	p.size = sizeof(SC_MOVE_OBJECT_PACKET);
-	p.type = SC_MOVE_OBJECT;
+	S2C_MovePlayer p;
+	p.playerId = c_id;
+	p.size = sizeof(S2C_MovePlayer);
+	p.type = S2C_MOVE_PLAYER;
 	p.x = clients[c_id].x;
 	p.y = clients[c_id].y;
 	p.move_time = clients[c_id].last_move_time;
@@ -265,11 +276,11 @@ void SESSION::send_move_packet(int c_id)
 
 void SESSION::send_add_player_packet(int c_id)
 {
-	SC_ADD_OBJECT_PACKET add_packet;
-	add_packet.id = c_id;
-	strcpy_s(add_packet.name, clients[c_id]._name);
-	add_packet.size = sizeof(add_packet);
-	add_packet.type = SC_ADD_OBJECT;
+	S2C_AddPlayer add_packet;
+	add_packet.playerId = c_id;
+	strcpy_s(add_packet.username, clients[c_id]._name);
+	add_packet.size = sizeof(S2C_AddPlayer);
+	add_packet.type = S2C_ADD_PLAYER;
 	add_packet.x = clients[c_id].x;
 	add_packet.y = clients[c_id].y;
 	_vl.lock();
@@ -278,19 +289,14 @@ void SESSION::send_add_player_packet(int c_id)
 	do_send(&add_packet);
 }
 
-void SESSION::send_chat_packet(int p_id, const char* mess)
+void SESSION::send_chat_packet(int, const char*)
 {
-	SC_CHAT_PACKET packet;
-	packet.id = p_id;
-	packet.size = sizeof(packet);
-	packet.type = SC_CHAT;
-	strcpy_s(packet.mess, mess);
-	do_send(&packet);
 }
+
 
 int get_new_client_id()
 {
-	for (int i = 0; i < MAX_USER; ++i) {
+	for (int i = 0; i < MAX_PLAYERS; ++i) {
 		lock_guard <mutex> ll{ clients[i]._s_lock };
 		if (clients[i]._state == ST_FREE)
 			return i;
@@ -300,14 +306,15 @@ int get_new_client_id()
 
 void process_packet(int c_id, char* packet)
 {
-	switch (packet[1]) {
-	case CS_LOGIN: {
-		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
-		strcpy_s(clients[c_id]._name, p->name);
+	PACKET_TYPE type = *reinterpret_cast<PACKET_TYPE*>(&packet[1]);
+	switch (type) {
+	case C2S_LOGIN: {
+		C2S_Login* p = reinterpret_cast<C2S_Login*>(packet);
+		strcpy_s(clients[c_id]._name, p->username);
 		{
 			lock_guard<mutex> ll{ clients[c_id]._s_lock };
-			clients[c_id].x = rand() % W_WIDTH;
-			clients[c_id].y = rand() % W_HEIGHT;
+			clients[c_id].x = rand() % WORLD_WIDTH;
+			clients[c_id].y = rand() % WORLD_HEIGHT;
 			clients[c_id]._state = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
@@ -322,22 +329,21 @@ void process_packet(int c_id, char* packet)
 			if (is_pc(pl._id)) pl.send_add_player_packet(c_id);
 			clients[c_id].send_add_player_packet(pl._id);
 
-			// 시야에 들어온 NPC를 깨움
 			if (is_npc(pl._id))
 				pl.wake_up();
 		}
 		break;
 	}
-	case CS_MOVE: {
-		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
+	case C2S_MOVE: {
+		C2S_Move* p = reinterpret_cast<C2S_Move*>(packet);
 		clients[c_id].last_move_time = p->move_time;
 		short x = clients[c_id].x;
 		short y = clients[c_id].y;
-		switch (p->direction) {
-		case 0: if (y > 0) y--; break;
-		case 1: if (y < W_HEIGHT - 1) y++; break;
-		case 2: if (x > 0) x--; break;
-		case 3: if (x < W_WIDTH - 1) x++; break;
+		switch (p->dir) {
+		case UP: if (y > 0) y--; break;
+		case DOWN: if (y < WORLD_HEIGHT - 1) y++; break;
+		case LEFT: if (x > 0) x--; break;
+		case RIGHT: if (x < WORLD_WIDTH - 1) x++; break;
 		}
 		clients[c_id].x = x;
 		clients[c_id].y = y;
@@ -371,7 +377,6 @@ void process_packet(int c_id, char* packet)
 
 			if (old_vlist.count(pl) == 0) {
 				clients[c_id].send_add_player_packet(pl);
-				// 새로 시야에 들어온 NPC를 깨움
 				if (is_npc(pl))
 					clients[pl].wake_up();
 			}
@@ -416,6 +421,18 @@ void do_npc_random_move(int npc_id)
 	clients[npc_id].do_random_move();
 }
 
+void send_login_fail(SOCKET client, const char* message)
+{
+	S2C_LoginResult p;
+	p.size = sizeof(S2C_LoginResult);
+	p.type = S2C_LOGIN_RESULT;
+	p.success = false;
+	strcpy_s(p.message, message);
+	WSABUF wsa_buf;
+	wsa_buf.buf = reinterpret_cast<char*>(&p);
+	wsa_buf.len = p.size;
+	WSASend(client, &wsa_buf, 1, 0, 0, nullptr, nullptr);
+}
 void worker_thread(HANDLE h_iocp)
 {
 	while (true) {
@@ -456,11 +473,15 @@ void worker_thread(HANDLE h_iocp)
 				clients[client_id]._socket = g_c_socket;
 				CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket),
 					h_iocp, client_id, 0);
+				clients[client_id].send_login_success();
 				clients[client_id].do_recv();
 				g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 			}
 			else {
 				cout << "Max user exceeded.\n";
+				send_login_fail(g_c_socket, "Server is full.");
+				closesocket(g_c_socket);
+				g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 			}
 			ZeroMemory(&g_a_over._over, sizeof(g_a_over._over));
 			int addr_size = sizeof(SOCKADDR_IN);
@@ -496,7 +517,7 @@ void worker_thread(HANDLE h_iocp)
 
 			// 시야 내에 플레이어가 있는지 확인
 			bool has_nearby_player = false;
-			for (int i = 0; i < MAX_USER; ++i) {
+			for (int i = 0; i < MAX_PLAYERS; ++i) {
 				if (clients[i]._state == ST_INGAME && can_see(npc_id, i)) {
 					has_nearby_player = true;
 					break;
@@ -524,9 +545,9 @@ void worker_thread(HANDLE h_iocp)
 void InitializeNPC()
 {
 	cout << "NPC intialize begin.\n";
-	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-		clients[i].x = rand() % W_WIDTH;
-		clients[i].y = rand() % W_HEIGHT;
+	for (int i = NPC_ID_START; i < MAX_PLAYERS + MAX_NPCS; ++i) {
+		clients[i].x = rand() % WORLD_WIDTH;
+		clients[i].y = rand() % WORLD_HEIGHT;
 		clients[i]._id = i;
 		sprintf_s(clients[i]._name, "NPC%d", i);
 		clients[i]._state = ST_INGAME;
@@ -542,7 +563,7 @@ void HB_thread ()
 
 	while (true) {
 		auto start_time = chrono::system_clock::now();
-		for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
+		for (int i = NPC_ID_START; i < MAX_PLAYERS + MAX_NPCS; ++i) {
 			if (clients[i]._state != ST_INGAME) continue;
 			clients[i].heart_beat();
 		}
@@ -563,7 +584,7 @@ void ai_thread()
 	while (true) {
 		int elapsed_time = 1000;
 		auto current_time = system_clock::now();
-		for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
+		for (int i = NPC_ID_START; i < MAX_PLAYERS + MAX_NPCS; ++i) {
 			if (clients[i]._state != ST_INGAME) continue;
 			auto duration = duration_cast<milliseconds>(current_time - clients[i].npc_last_move_time).count();
 			if (duration >= MOVE_COOL_TIME) {
@@ -615,7 +636,7 @@ int main()
 	SOCKADDR_IN server_addr;
 	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
-	server_addr.sin_port = htons(PORT_NUM);
+	server_addr.sin_port = htons(PORT);
 	server_addr.sin_addr.S_un.S_addr = INADDR_ANY;
 	bind(g_s_socket, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr));
 	listen(g_s_socket, SOMAXCONN);
@@ -632,7 +653,7 @@ int main()
 
 	vector<thread> worker_threads;
 	thread timer_th(timer_thread);   // HB_thread 대신 timer_thread 사용
-	int num_threads = std::thread::hardware_concurrency();
+	int num_threads = std::thread::hardware_concurrency() - 1;
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
 	for (auto& th : worker_threads)

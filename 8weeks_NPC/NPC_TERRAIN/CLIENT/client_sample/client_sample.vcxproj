@@ -147,7 +147,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\iocp_game_server\iocp_game_server\protocol.h" />
+    <ClInclude Include="..\..\iocp_game_server\iocp_game_server\protocol_2026.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
